@@ -1,0 +1,313 @@
+ SECTION A — SQL (Hotel Management System)
+
+1. For every user, get user_id and last booked room_no
+
+SELECT 
+    u.user_id,
+    b.room_no
+FROM users u
+JOIN (
+        SELECT user_id, room_no,
+               ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY booking_date DESC) AS rn
+        FROM bookings
+     ) b ON u.user_id = b.user_id AND b.rn = 1;
+
+
+---
+
+2. Get booking_id and total billing amount of every booking created in Nov 2021
+
+SELECT 
+    bc.booking_id,
+    SUM(i.item_rate * bc.item_quantity) AS total_amount
+FROM booking_commercials bc
+JOIN items i ON bc.item_id = i.item_id
+JOIN bookings b ON b.booking_id = bc.booking_id
+WHERE EXTRACT(YEAR FROM b.booking_date) = 2021
+  AND EXTRACT(MONTH FROM b.booking_date) = 11
+GROUP BY bc.booking_id;
+
+
+---
+
+3. Get bill_id and bill_amount for bills in Oct 2021 with bill_amount > 1000
+
+SELECT 
+    bc.bill_id,
+    SUM(i.item_rate * bc.item_quantity) AS bill_amount
+FROM booking_commercials bc
+JOIN items i ON bc.item_id = i.item_id
+WHERE EXTRACT(YEAR FROM bc.bill_date) = 2021
+  AND EXTRACT(MONTH FROM bc.bill_date) = 10
+GROUP BY bc.bill_id
+HAVING SUM(i.item_rate * bc.item_quantity) > 1000;
+
+
+---
+
+4. Most ordered & least ordered item of each month of 2021
+
+WITH monthly AS (
+    SELECT 
+        EXTRACT(MONTH FROM bill_date) AS month,
+        item_id,
+        SUM(item_quantity) AS total_qty
+    FROM booking_commercials
+    WHERE EXTRACT(YEAR FROM bill_date) = 2021
+    GROUP BY month, item_id
+),
+ranked AS (
+    SELECT 
+        month, item_id, total_qty,
+        RANK() OVER (PARTITION BY month ORDER BY total_qty DESC) AS max_rnk,
+        RANK() OVER (PARTITION BY month ORDER BY total_qty ASC) AS min_rnk
+    FROM monthly
+)
+SELECT month, 
+       item_id AS most_ordered_item
+FROM ranked WHERE max_rnk = 1
+UNION ALL
+SELECT month,
+       item_id AS least_ordered_item
+FROM ranked WHERE min_rnk = 1;
+
+
+---
+
+5. Customers with second highest bill value of each month of 2021
+
+WITH bill_values AS (
+    SELECT 
+        b.user_id,
+        EXTRACT(MONTH FROM bc.bill_date) AS month,
+        SUM(i.item_rate * bc.item_quantity) AS bill_value
+    FROM booking_commercials bc
+    JOIN items i ON bc.item_id = i.item_id
+    JOIN bookings b ON b.booking_id = bc.booking_id
+    WHERE EXTRACT(YEAR FROM bc.bill_date) = 2021
+    GROUP BY b.user_id, month
+),
+ranked AS (
+    SELECT *,
+        DENSE_RANK() OVER (PARTITION BY month ORDER BY bill_value DESC) AS rnk
+    FROM bill_values
+)
+SELECT month, user_id, bill_value
+FROM ranked
+WHERE rnk = 2;
+
+
+---
+SECTION B — SQL (Clinic Management System)
+
+1. Revenue from each sales channel for a given year
+
+SELECT 
+    sales_channel,
+    SUM(amount) AS total_revenue
+FROM clinic_sales
+WHERE EXTRACT(YEAR FROM datetime) = 2021
+GROUP BY sales_channel;
+
+
+---
+
+2. Top 10 most valuable customers (given year)
+
+SELECT 
+    uid,
+    SUM(amount) AS total_spent
+FROM clinic_sales
+WHERE EXTRACT(YEAR FROM datetime) = 2021
+GROUP BY uid
+ORDER BY total_spent DESC
+LIMIT 10;
+
+
+---
+
+3. Month-wise revenue, expense, profit & status
+
+WITH rev AS (
+    SELECT 
+        EXTRACT(MONTH FROM datetime) AS month,
+        SUM(amount) AS revenue
+    FROM clinic_sales
+    WHERE EXTRACT(YEAR FROM datetime) = 2021
+    GROUP BY month
+),
+exp AS (
+    SELECT 
+        EXTRACT(MONTH FROM datetime) AS month,
+        SUM(amount) AS expense
+    FROM expenses
+    WHERE EXTRACT(YEAR FROM datetime) = 2021
+    GROUP BY month
+)
+SELECT 
+    r.month,
+    r.revenue,
+    e.expense,
+    (r.revenue - e.expense) AS profit,
+    CASE WHEN (r.revenue - e.expense) > 0 THEN 'profitable'
+         ELSE 'not-profitable' END AS status
+FROM rev r
+JOIN exp e USING (month)
+ORDER BY month;
+
+
+---
+
+4. For each city: most profitable clinic for a given month
+
+WITH profit AS (
+    SELECT 
+        c.cid,
+        c.city,
+        SUM(cs.amount) AS revenue,
+        (SELECT COALESCE(SUM(e.amount),0)
+         FROM expenses e
+         WHERE e.cid = c.cid
+           AND EXTRACT(MONTH FROM e.datetime) = 9) AS expense
+    FROM clinics c
+    LEFT JOIN clinic_sales cs ON cs.cid = c.cid
+        AND EXTRACT(MONTH FROM cs.datetime) = 9
+    GROUP BY c.cid, c.city
+)
+SELECT city, cid, (revenue - expense) AS profit
+FROM (
+    SELECT *, 
+           RANK() OVER (PARTITION BY city ORDER BY (revenue - expense) DESC) AS rnk
+    FROM profit
+) t
+WHERE rnk = 1;
+
+
+---
+
+5. For each state: second least profitable clinic for a given month
+
+WITH profit AS (
+    SELECT 
+        c.cid,
+        c.state,
+        SUM(cs.amount) AS revenue,
+        (SELECT COALESCE(SUM(e.amount),0)
+         FROM expenses e
+         WHERE e.cid = c.cid
+           AND EXTRACT(MONTH FROM e.datetime) = 9) AS expense
+    FROM clinics c
+    LEFT JOIN clinic_sales cs ON cs.cid = c.cid
+        AND EXTRACT(MONTH FROM cs.datetime) = 9
+    GROUP BY c.cid, c.state
+)
+SELECT state, cid, (revenue - expense) AS profit
+FROM (
+    SELECT *, 
+           DENSE_RANK() OVER (PARTITION BY state ORDER BY (revenue - expense) ASC) AS rnk
+    FROM profit
+) t
+WHERE rnk = 2;
+
+
+---
+SECTION C — Spreadsheet Proficiency
+
+1. Populate ticket_created_at in feedbacks table
+
+Method (Excel / Google Sheets VLOOKUP / XLOOKUP)
+
+If ticket sheet is named Tickets and feedbacks sheet is Feedbacks:
+
+In Feedbacks!D2 (ticket_created_at column):
+
+Using XLOOKUP (recommended):
+
+=XLOOKUP(A2, Tickets!E:E, Tickets!B:B)
+
+A2 → cms_id in feedbacks
+
+Tickets!E:E → cms_id column in tickets
+
+Tickets!B:B → created_at column in tickets
+
+
+
+---
+
+2. Outlet-wise count of tickets
+
+Assume worksheet: Tickets
+
+a. Tickets created & closed on the same day
+
+In a pivot-like formula:
+
+=COUNTIFS(Tickets!D:D, outlet_id,
+          Tickets!B:B, "=" & INT(Tickets!C:C))
+
+Simpler explanation:
+
+Create a helper column in Tickets:
+=INT(created_at) = INT(closed_at) → TRUE/FALSE
+Then use Pivot Table:
+
+Rows: outlet_id
+
+Values: COUNT of TRUE
+
+
+
+---
+
+b. Tickets created & closed in same hour of same day
+
+Add helper columns:
+
+Created Hour:
+
+=HOUR(B2)
+
+Closed Hour:
+
+=HOUR(C2)
+
+Same hour check:
+
+=AND(INT(B2)=INT(C2), HOUR(B2)=HOUR(C2))
+
+Then pivot table: count TRUE per outlet.
+
+
+---
+SECTION D — Python Proficiency
+
+1. Convert minutes to human-readable form
+
+def convert_minutes(n):
+    hours = n // 60
+    minutes = n % 60
+    
+    if hours > 0:
+        return f"{hours} hr{'s' if hours>1 else ''} {minutes} minutes"
+    else:
+        return f"{minutes} minutes"
+
+print(convert_minutes(130))  # 2 hrs 10 minutes
+print(convert_minutes(110))  # 1 hr 50 minutes
+
+
+---
+
+2. Remove duplicates and print unique characters
+
+Using loop only:
+
+def remove_duplicates(s):
+    unique = ""
+    for ch in s:
+        if ch not in unique:
+            unique += ch
+    return unique
+
+print(remove_duplicates("banana"))  
